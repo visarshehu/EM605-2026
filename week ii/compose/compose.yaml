@@ -1,0 +1,97 @@
+name: todo-stack
+
+services:
+  frontend:
+    build: ./frontend
+    image: todo-frontend:${TAG:-dev}
+    ports:
+      - "${APP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [front]
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    image: todo-backend:${TAG:-dev}
+    environment:
+      DB_HOST: db
+      DB_NAME: todos
+      DB_USER: todo
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_HOST: redis
+    secrets: [db_password]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks: [front, back]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: todos
+      POSTGRES_USER: todo
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todo -d todos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks: [back]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks: [back]
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:4
+    profiles: [debug]
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    networks: [back, tools]
+
+networks:
+  front:            # browser-facing: frontend + backend
+  back:             # private: backend + db + redis, no internet access
+    internal: true
+  tools:            # lets Adminer publish a port (internal networks cannot)
+
+volumes:
+  pgdata:
+  redisdata:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt

@@ -1,0 +1,5 @@
+secrets/*.txt
+!secrets/*.example
+node_modules/
+dist/
+__pycache__/
